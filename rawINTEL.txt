@@ -1,0 +1,262 @@
+RTM Locker Ransomware as a Service (RaaS) Now Suits Up for Linux Architecture
+Tags: Threat Intelligence, Endpoint Security, Threat Research, Cybersecurity
+
+Uptycs Threat Research
+April 26, 2023
+Share:
+The Uptycs threat research team has discovered a new ransomware binary attributed to the RTM group, a known ransomware-as-a-service (RaaS) provider. This is the first time the group has created a Linux binary. Its locker ransomware infects Linux, NAS, and ESXi hosts and appears to be inspired by Babuk ransomware's leaked source code. It uses a combination of ECDH on Curve25519 (asymmetric encryption) and Chacha20 (symmetric encryption) to encrypt files.
+
+RTM Locker was identified during Uptycs' dark web hunting. Its malware is specifically geared toward ESXi hosts, as it contains two related commands. Its initial access vector remains unknown. Both asymmetric and symmetric encryption make it impossible to decrypt files without the attacker's private key.
+
+Notable similarities between RTM Locker and Babuk ransomware include random number generation in addition to using ECDH in Curve25519 for asymmetric encryption. Babuk differs slightly from RTM Locker by using sosemanuk for asymmetric encryption, while RTM Locker uses ChaCha20.
+
+The good news is that Uptycs XDR provides advanced detection capabilities and YARA rules for detecting RTM Locker malware.
+
+ 
+
+FAQ
+Q. How are RTM Locker and Babuk ransomware related?
+
+It appears RTM Locker leverages leaked source code from Babuk ransomware. Both malware types use random number generation, Curve25519 implementation.
+
+Q. How does this new ransomware infect Linux, NAS, and ESXi hosts?
+
+The initial access vector for RTM Locker is unknown at this time.
+
+Q. Can the encrypted files be decrypted without the attacker's private key?
+
+Sorry, no. The combination of asymmetric and symmetric encryption makes decryption impossible without the private key.
+
+Q. What are some unique RTM Locker features compared to other ransomware strains?
+
+RTM Locker specifically targets ESXi hosts, contains two ESXi commands, and is the first Linux binary created by the RTM group. It is also inspired by leaked source code from Babuk ransomware.
+
+Q. How did the Uptycs threat research team discover this threat actor’s ransomware?
+
+We identified the RTM Locker threat during our ongoing dark web hunting. Such continual research is imperative to better serve our customers.
+
+Q. What measures can be taken to detect and mitigate RTM Locker?
+
+Organizations can use advanced detection solutions such as Uptycs XDR. Its built-in YARA rules and other advanced detection capabilities identify and mitigate RTM Locker ransomware. To this end the Uptycs threat research team has shared a YARA rule to detect RTM Locker.
+
+ 
+
+Threat Attribution
+The threat group RTM Locker was discovered by the Uptycs Threat Intelligence team during our dark web hunting. Figure 1 shows the post made by the RTM group about their Locker, which targets Windows, ESXi/Linux, and NAS systems.
+
+RTM Locker was discovered by the Uptycs threat research team while dark web hunting
+
+Fig. 1 - The post made by RTM group about its locker
+
+ 
+
+A previous Windows version of this ransomware was reported by Trellix, in which it mentions an onion site link to contact the threat actor. This appears to have prompted the team to move to Tox. The binary for this report contains no mention of the onion site; only a Tox ID is mentioned (Figure 18).
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: Attacker update about moving from an onion site to Tox
+Fig. 2 - Attacker update about moving from an onion site to Tox
+
+ 
+
+Technical Analysis
+RTM Locker workflow: Mind map of the Linux executable
+Fig. 3 - Mind map of the Linux executable
+
+ 
+
+The ransomware binary seems to be geared towards ESXi, because of the two ESXi commands that were noticed at the start of the program. It is statically compiled and stripped, making reverse engineering more difficult and allowing the binary to run on more systems. The initial access vector is unknown.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: Decompiled code for the ransomware’s main procedure
+Fig. 4 - Main procedure of the ransomware
+
+ 
+
+name_threads, run_esxi_commands and pthread_wrapper_main are the important functions in this binary. name_threads uses sysconf(3) with _SC_NPROCESSORS_ONLN as argument to find out the number of threads to use in the program, and calls name_thread_routine in the pthread_wrapper routine to name each thread as shown in Figure 5.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: pthread_wrapper calls pthread_create with name_thread_routine as an argument
+FIg. 5 - pthread_wraper calls pthread_create with name_thread_routine as an argument
+
+ 
+
+name_thread_routine names each thread to use later in the encryption process. The threads are named “Thread-pool-%d”, with the decimal number representing the index of the thread. Shown in Figure 6, this is done using prctl(2) with PR_SET_NAME as its argument. 
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: Threads being named inside name_thread_routine
+Fig. 6 - Threads being named inside name_thread_routine
+
+ 
+
+After naming each thread, the run_esxi_commands routine is called. Notably, this is not called on the NAS variant of the binary, since a NAS does not run ESXi.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: The program shown here runs 2 ESXi commands
+Fig. 7 - Two ESXi commands are run using this program
+
+ 
+
+The two ESXi commands are:
+
+“esxcli vm process list >> vmlist.tmp.txt”
+This command lists all the ESXi VMs currently running on the system.
+“esxcli vm process kill -t=force -w”
+This command kills all the ESXi VMs that were found by the previous command
+Interestingly, the file read by the program, vmlisttmp.txt, isn’t the file that it writes to (vmlist.tmp.txt). The differing filenames are a mistake made by the ransomware author, which suggests this ransomware might still be under development.
+
+After the binary successfully kills all the running ESXi VMs, it begins the encryption routine by calling pthread_wrapper_main. 
+
+pthread_wrapper_main seems to be a custom function that calls multiple pthread commands to run the encryption process more efficiently. Figure 8 shows a snippet of FUN_00407580, a function that is used to read the entire system using opendir(3), after which it performs lstat(2) on the file descriptor and progresses through the function based on the results of the system call.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: A FUN_00407580 excerpt
+Fig. 8 - A FUN_00407580 excerpt
+
+ 
+
+Two parts of this function are intriguing: 1) the call to the actual encryption routine (i.e., encrypt_file referenced in the main function, and 2) how it finds which file to encrypt.
+
+The lstat(2) system call returns 4 for a directory or 8 for a file. Figure 9 shows a function excerpt where a checksum is performed, after which the encrypt_file function is called. This checksum seems to only check file extensions and, like the source code that inspired it, currently works for the following extensions:
+
+ 
+
+.log	.vmdk	.vmem	.vswp	.vmsn
+RTM Locker Ransomware as a Service (RaaS) on Linux: Another Excerpt from FUN_00407580
+Fig. 9 - Excerpt from FUN_00407580
+
+ 
+
+The encryption function also uses pthreads to speed up execution. It obtains locks on particular threads to prevent race conditions, then runs another function that encrypts a single file.
+
+Figure 10 shows the function called by encrypt_file. It has two constants, `expand 16-byte k` and `expand 32-byte k` related to the Salsa20/ChaCha family of ciphers. This leads us to believe the file is encrypted using the same cipher family. Figure 11 shows the constants as found in the function.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: The FUN_00406680 function that encrypts a single file
+Fig. 10 - The FUN_00406680 function that encrypts a single file
+
+ 
+
+The function in Figure 10 essentially encrypts a chunk of bytes read from fread(3) and writes that, after which it probably seeks to the next chunk before reading it and encrypting the next chunk of bytes.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: Constants related to the Salsa20/ChaCha cipher family
+Fig. 11 - Constants related to the Salsa20/ChaCha cipher family
+
+ 
+
+After searching through the entire file, the filename has an .RTM extension appended to it.
+
+ 
+
+File encryption on Windows and Linux versions
+The encryption algorithm has two steps:
+
+Asymmetric encryption is initially used. The bad actor embeds a public key in the file, with its corresponding private key remaining with the attacker. It generates a 32-byte shared secret between the attacker's public key and the file ephemeral keys using the Diffie-Hellman key exchange protocol.
+It then uses ChaCha20 symmetric encryption. The shared secret is hashed to obtain a 32-byte key to be used with an asymmetric encryption algorithm. After encryption, each public key is written at the end of its corresponding file (as with Linux) or appended as an extension for Windows.
+Both ECDH on Curve25519 and ChaCha are statically implemented without using any libraries or crypt function. 
+
+ 
+
+The Encryption Process
+1. An ephemeral key is generated by using:
+
+Windows – SystemFunction36 resolves to bcryptprimitives.ProcessPrng, which generates a specified number of random bytes from the user-mode per-processor random number generator.
+Linux – By reading /dev/urandom to generate a random sequence.
+These random bytes are used as a private key during the Elliptic-Curve Diffie-Hellman (ECDH) algorithm implemented on Curve25519.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: Random number generator as ephemeral keyFig. 12 - Random number generator as ephemeral key
+
+ 
+
+2. The private key is now used to generate the public key on Curve25519. 
+
+Windows – The public key is appended as an extension to the encrypted file.
+Linux – The public key is appended to the end of the encrypted file. This public key is used for decryption in the event of a victim paying ransom.
+Screenshot showing the Encrypted filesFig. 13 - Encrypted files
+
+ 
+
+3. A shared key is now generated, using the private key from step 1 and the attacker's public key hardcoded in the file on Curve25519. This shared secret is now used in symmetric ChaCha20 encryption.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: Code snippet showing shared key generation Curve25519
+Fig. 14 - Code snippet showing shared key generation Curve25519
+
+ 
+
+ChaCha20 is a symmetric encryption where:
+
+Key – 32-byte shared key from step 3
+Nonce – 8 bytes 0000000000000000
+Counter – 0
+ChaCha20 is used for symmetric encryption in both Windows and Linux
+For Windows, only the first 8000 hex bytes are encrypted, and the remaining bytes remain intact
+For Linux, the entire file is encrypted
+RTM Locker Ransomware as a Service (RaaS) on Linux: ChaCha key structure along with constants, key, counter, and nonce
+Fig. 15 - ChaCha key structure along with constants, key, counter, and nonce
+
+ 
+
+File decryption
+To decrypt the file, the public key, which is present in extension (WIndows) / end of the file (Linux), is read and along with the attacker's private key the shared secret is obtained allowing file decryption. Use of both asymmetric and symmetric encryption makes it impossible to decrypt the encrypted files without the attacker's private key. 
+
+ 
+
+Similarities with Babuk ransomware
+As mentioned, RTM Locker was likely inspired from leaked source code of Babuk ransomware. 
+
+Linux random number generation is done by reading /dev/urandom, the same as for Babuk ransomware 
+Windows and Linux Curve25519 implementation is based on Babuk ransomware 
+Both Linux versions encrypt files using the .log,  .vmdk, .vmem, .vswp, and  .vmsn file extensions 
+Both use ECDH in Curve25519 for asymmetric and ChaCha for symmetric encryption.
+RTM Locker Ransomware as a Service (RaaS) on Linux: Code snippets showing similarities between RTM and Babuk ransomware
+Fig. 16 - Similarities between RTM and Babuk ransomware
+
+ 
+
+After the entire directory is read, FUN_0047580 leaves a ransom note in the current directory that has a !!! Warning!!! filename (Figure 18). 
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: Excerpt from FUN_0047580 that writes the ransom note
+Fig. 17 - Excerpt from FUN_0047580 that writes the ransom note
+
+ 
+
+Figure 18 shows the RTM Locker ransom note. They group has left a Tox ID to contact it to decrypt the files after paying the ransom.
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: screenshot from the RaaS Ransom note
+Fig. 18 - Ransom note
+
+ 
+
+RTM Locker Ransomware as a Service (RaaS) on Linux: Files encrypted by the RTM Locker ransomware
+Fig. 19 - Files encrypted by the RTM Locker ransomware
+
+ 
+
+Uptycs XDR Coverage
+In addition to having YARA built in and being armed with other advanced detection capabilities, Uptycs XDR users can easily scan for RTM Locker. XDR contextual detection provides important details about identified malware. Users can navigate to the toolkit data section in the detection screen, then click a detected item to reveal its profile (Fig. 20).
+
+Screengrab from the Uptycs detection of this RaaS
+Fig. 20 - Uptycs detection
+
+ 
+
+IOC
+SHA256
+55b85e76abb172536c64a8f6cf4101f943ea826042826759ded4ce46adc00638
+b376d511fb69085b1d28b62be846d049629079f4f4f826fd0f46df26378e398b
+d68c99d7680bf6a4644770edfe338b8d0591dfe143278412d5ed62848ffc99e0
+YARA
+Uptycs XDR scans the memory of newly launched processes and detects any presence of suspicious strings by using YARA rules. The rule for detecting this RTM Locker has already been made available to our customers.
+
+If you’re not an Uptycs XDR customer, you can use either the YARA tool or a third-party tool to scan suspicious processes. Here we share the rule for your convenience.
+
+ 
+
+rule Uptycs_Ransomware_RTM_Locker
+{
+    meta:
+        malware_name = "RANSOMWARE"
+        description = "Ransomware is a malware that encrypts sensitive information on your system and asks for ransom in exchange for restoring the encrypted data."
+        author = "Uptycs Inc"
+        version = "1"
+    strings:
+        $Ransomware_RTM_Locker_0 = "esxcli vm process list"  ascii wide
+        $Ransomware_RTM_Locker_1 = "vmlist.tmp.txt"  ascii wide
+        $Ransomware_RTM_Locker_2 = "esxcli vm process kill"  ascii wide
+        $Ransomware_RTM_Locker_3 = "!!! Warning!!!"  ascii wide
+        $Ransomware_RTM_Locker_4 = "Your network is infected by the RTM Locker command"  ascii wide
+    condition:
+        all of ($Ransomware_RTM_Locker*)
+}
